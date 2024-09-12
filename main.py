@@ -19,7 +19,7 @@ def get_offers():
 
 
 def get_students():
-    students_response = requests.get(f"{API_URL}/student/list/listStudent/getAll")
+    students_response = requests.get(f"{API_URL}/student/list/listStudent/getAll?pageSize=500")
     if students_response.status_code == 200:
         return students_response.json()['students']
     else:
