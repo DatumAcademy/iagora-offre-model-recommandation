@@ -119,7 +119,7 @@ def recommander():
     score_total = 0.4 * similarite_competences[
         0] + 0.3 * similarite_experience + 0.2 * similarite_langue + 0.1 * similarite_contrat
 
-    meilleures_offres = offres_df.loc[np.argsort(-score_total)[:5], ['label', 'entreprise']]
+    meilleures_offres = offres_df.loc[np.argsort(-score_total)[:5], ['offer_id', 'label', 'entreprise']]
 
     return jsonify({
         "student_id": student_id,
