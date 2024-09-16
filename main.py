@@ -3,7 +3,7 @@ import requests
 import numpy as np
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
-import threading
+import re
 
 app = Flask(__name__)
 
@@ -13,7 +13,7 @@ API_URL = "https://iagora-offre-serveur.onrender.com/OffreServeur"
 def get_offers():
     offers_response = requests.get(f"{API_URL}/search")
     if offers_response.status_code == 200:
-        return offers_response.json()['data']['offers']
+        return offers_response.json().get('data', {}).get('offers', [])
     else:
         return []
 
@@ -21,16 +21,42 @@ def get_offers():
 def get_students():
     students_response = requests.get(f"{API_URL}/student/list/listStudent/getAll?pageSize=500")
     if students_response.status_code == 200:
-        return students_response.json()['students']
+        return students_response.json().get('students', [])
     else:
         return []
 
 
-print(get_students)
+def normalize_skill(skill):
+    skill = skill.lower().strip()
+    skill = re.sub(r'[^a-z0-9]', '', skill)
+    corrections = {
+        'reactjs': 'react',
+        'vuejs': 'vue',
+        'nodejs': 'nodejs',
+        'expressjs': 'express',
+        'c++': 'cpp',
+        'c#': 'csharp',
+        'aspnet': 'aspnet',
+        'springboot': 'spring',
+        'typescript': 'ts',
+        'javascript': 'js',
+        'html5': 'html',
+        'css3': 'css',
+        'postgresql': 'postgres',
+        'sqlserver': 'sql',
+        'python3': 'python',
+        'mongodb': 'mongodb',
+        'flask': 'flask',
+        'django': 'django',
+        'ruby': 'ruby',
+        'ruby on rails': 'rails'
+    }
+    return corrections.get(skill, skill)
 
 
 def extract_skills_vector(skills_list, all_skills):
-    vector = [1 if skill in skills_list else 0 for skill in all_skills]
+    normalized_skills_list = [normalize_skill(skill) for skill in skills_list]
+    vector = [1 if normalize_skill(skill) in normalized_skills_list else 0 for skill in all_skills]
     return vector
 
 
@@ -62,43 +88,44 @@ def recommander():
 
     toutes_les_competences = set()
     for offre in offres:
-        competences_offre = offre['skills'].split(", ")
-        toutes_les_competences.update(competences_offre)
+        competences_offre = offre.get('skills', '').split(", ")
+        toutes_les_competences.update([normalize_skill(skill) for skill in competences_offre])
 
     for etudiant in etudiants:
-        competences_etudiant = etudiant['skills']
-        toutes_les_competences.update(competences_etudiant)
+        competences_etudiant = etudiant.get('skills', [])
+        toutes_les_competences.update([normalize_skill(skill) for skill in competences_etudiant])
 
     toutes_les_competences = list(toutes_les_competences)
 
     donnees_etudiants = []
     for etudiant in etudiants:
-        vecteur_competences_etudiant = extract_skills_vector(etudiant['skills'], toutes_les_competences)
+        experience = etudiant.get('experience', [])
+        yearsexperience = experience[0].get('yearsexperience', 0) if experience else 0
+
+        vecteur_competences_etudiant = extract_skills_vector(etudiant.get('skills', []), toutes_les_competences)
         donnees_etudiants.append({
             "numETU": etudiant['numETU'],
             "nom": f"{etudiant['first_name']} {etudiant['last_name']}",
             "vecteur_competences": vecteur_competences_etudiant,
-            "experience": etudiant['experience'][0]['yearsexperience'] if etudiant['experience'] else 0,
-            "langue": etudiant['language'][0]['label'] if etudiant['language'] else "Non spécifié"
+            "experience": yearsexperience,
+            "langue": etudiant['language'][0]['label'] if etudiant.get('language') and len(etudiant['language']) > 0 else 'Non spécifié'
         })
 
     donnees_offres = []
     for offre in offres:
-        vecteur_competences_offre = extract_skills_vector(offre['skills'].split(", "), toutes_les_competences)
+        vecteur_competences_offre = extract_skills_vector(offre.get('skills', '').split(", "), toutes_les_competences)
         donnees_offres.append({
             "offer_id": offre['id'],
             "label": offre['label'],
             "entreprise": offre['company'],
             "vecteur_competences": vecteur_competences_offre,
-            "experience_min": offre['minexperience'],
-            "langue": offre['language']['label'],
-            "contrat": offre['contract']
+            "experience_min": offre.get('minexperience', 0),
+            "langue": offre.get('language', {}).get('label', 'Non spécifié'),
+            "contrat": offre.get('contract', 'Non spécifié')
         })
 
     etudiants_df = pd.DataFrame(donnees_etudiants)
     offres_df = pd.DataFrame(donnees_offres)
-
-    print(etudiants_df.columns)
 
     donnees_etudiant = etudiants_df[etudiants_df['numETU'] == student_id]
     if donnees_etudiant.empty:
@@ -116,8 +143,10 @@ def recommander():
     similarite_langue = offres_df['langue'].apply(lambda x: language_similarity(langue_etudiant, x)).values
     similarite_contrat = offres_df['contrat'].apply(lambda x: contract_similarity("Stagiaire", x)).values
 
-    score_total = 0.4 * similarite_competences[
-        0] + 0.3 * similarite_experience + 0.2 * similarite_langue + 0.1 * similarite_contrat
+    score_total = (0.4 * similarite_competences[0] +
+                   0.3 * similarite_experience +
+                   0.2 * similarite_langue +
+                   0.1 * similarite_contrat)
 
     meilleures_offres = offres_df.loc[np.argsort(-score_total)[:10], ['offer_id', 'label', 'entreprise']]
 
@@ -127,8 +156,5 @@ def recommander():
     })
 
 
-# Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000, debug=True)
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
