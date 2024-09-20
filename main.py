@@ -11,7 +11,7 @@ API_URL = "https://iagora-offre-serveur.onrender.com/OffreServeur"
 
 
 def get_offers():
-    offers_response = requests.get(f"{API_URL}/search")
+    offers_response = requests.get(f"{API_URL}/search?pageSize=3000")
     if offers_response.status_code == 200:
         return offers_response.json().get('data', {}).get('offers', [])
     else:
