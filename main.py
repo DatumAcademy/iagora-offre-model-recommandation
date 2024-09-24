@@ -12,6 +12,8 @@ app = Flask(__name__)
 
 API_URL = "https://iagora-offre-serveur.onrender.com/OffreServeur"
 
+model = None
+
 
 def get_offers():
     offers_response = requests.get(f"{API_URL}/search?pageSize=3000")
@@ -112,7 +114,6 @@ def train_model():
     etudiants_df, offres_df, toutes_les_competences = prepare_data()
 
     data = []
-
     for _, etudiant in etudiants_df.iterrows():
         for _, offre in offres_df.iterrows():
             data.append({
@@ -152,6 +153,7 @@ def train_model():
 
 @app.route('/recommander', methods=['GET'])
 def recommander():
+    global model
     student_id = request.args.get('student_id')
 
     if not student_id:
@@ -164,15 +166,33 @@ def recommander():
     if donnees_etudiant.empty:
         return jsonify({"error": "Étudiant non trouvé"}), 404
 
-    vecteur_competences_etudiant = np.array(donnees_etudiant['vecteur_competences'].tolist())
+    vecteur_competences_etudiant = np.array(donnees_etudiant['vecteur_competences'].tolist())[0]
+    experience_etudiant = donnees_etudiant['experience'].values[0]
+    langue_etudiant = donnees_etudiant['langue'].values[0]
 
     matrice_competences_offres = np.array(offres_df['vecteur_competences'].tolist())
-
-    similarite_competences = cosine_similarity(vecteur_competences_etudiant, matrice_competences_offres)[0]
+    similarite_competences = cosine_similarity([vecteur_competences_etudiant], matrice_competences_offres)[0]
 
     top_indices = np.argsort(similarite_competences)[-10:][::-1]
-
     meilleures_offres = offres_df.iloc[top_indices][['offer_id', 'label', 'entreprise']]
+
+    meilleures_offres['offer_id'] = meilleures_offres['offer_id'].astype(str)
+    meilleures_offres['label'] = meilleures_offres['label'].astype(str)
+    meilleures_offres['entreprise'] = meilleures_offres['entreprise'].astype(str)
+
+    predictions = []
+
+    for i in top_indices:
+        offre_vecteur_competences = matrice_competences_offres[i]
+        experience_min_offre = offres_df.iloc[i]['experience_min']
+        langue_offre = offres_df.iloc[i]['langue']
+
+        langue_match = 1 if langue_etudiant == langue_offre else 0
+
+        X_pred = np.hstack([vecteur_competences_etudiant, offre_vecteur_competences, [experience_etudiant, experience_min_offre, langue_match]])
+
+        prediction = model.predict([X_pred])
+        predictions.append(int(prediction[0]))
 
     return jsonify({
         "student_id": student_id,
