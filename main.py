@@ -3,6 +3,9 @@ import requests
 import numpy as np
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
 import re
 
 app = Flask(__name__)
@@ -60,29 +63,7 @@ def extract_skills_vector(skills_list, all_skills):
     return vector
 
 
-def experience_similarity(student_exp, offer_min_exp):
-    if student_exp >= offer_min_exp:
-        return 1
-    else:
-        return student_exp / offer_min_exp
-
-
-def language_similarity(student_lang, offer_lang):
-    return 1 if student_lang == offer_lang else 0
-
-
-def contract_similarity(student_contract_pref, offer_contract):
-    return 1 if student_contract_pref == offer_contract else 0
-
-
-@app.route('/recommander', methods=['GET'])
-def recommander():
-    student_id = request.args.get('student_id')
-
-    if not student_id:
-        return jsonify({"error": "student_id est requis"}), 400
-
-    student_id = int(student_id)
+def prepare_data():
     offres = get_offers()
     etudiants = get_students()
 
@@ -105,10 +86,10 @@ def recommander():
         vecteur_competences_etudiant = extract_skills_vector(etudiant.get('skills', []), toutes_les_competences)
         donnees_etudiants.append({
             "numETU": etudiant['numETU'],
-            "nom": f"{etudiant['first_name']} {etudiant['last_name']}",
             "vecteur_competences": vecteur_competences_etudiant,
             "experience": yearsexperience,
-            "langue": etudiant['language'][0]['label'] if etudiant.get('language') and len(etudiant['language']) > 0 else 'Non spécifié'
+            "langue": etudiant['language'][0]['label'] if etudiant.get('language') and len(
+                etudiant['language']) > 0 else 'Non spécifié'
         })
 
     donnees_offres = []
@@ -124,31 +105,74 @@ def recommander():
             "contrat": offre.get('contract', 'Non spécifié')
         })
 
-    etudiants_df = pd.DataFrame(donnees_etudiants)
-    offres_df = pd.DataFrame(donnees_offres)
+    return pd.DataFrame(donnees_etudiants), pd.DataFrame(donnees_offres), toutes_les_competences
+
+
+def train_model():
+    etudiants_df, offres_df, toutes_les_competences = prepare_data()
+
+    data = []
+
+    for _, etudiant in etudiants_df.iterrows():
+        for _, offre in offres_df.iterrows():
+            data.append({
+                "student_id": etudiant["numETU"],
+                "offer_id": offre["offer_id"],
+                "vecteur_competences_etudiant": etudiant["vecteur_competences"],
+                "vecteur_competences_offre": offre["vecteur_competences"],
+                "experience_etudiant": etudiant["experience"],
+                "experience_min_offre": offre["experience_min"],
+                "langue_etudiant": etudiant["langue"],
+                "langue_offre": offre["langue"],
+                "applied": np.random.randint(0, 2)
+            })
+
+    df = pd.DataFrame(data)
+
+    X = np.hstack([
+        np.vstack(df['vecteur_competences_etudiant']),
+        np.vstack(df['vecteur_competences_offre']),
+        df[['experience_etudiant', 'experience_min_offre']].values,
+        (df['langue_etudiant'] == df['langue_offre']).values.reshape(-1, 1)
+    ])
+
+    y = df['applied']
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    model = RandomForestClassifier(n_estimators=100)
+    model.fit(X_train, y_train)
+
+    y_pred = model.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    print(f"Accuracy: {accuracy * 100:.2f}%")
+
+    return model
+
+
+@app.route('/recommander', methods=['GET'])
+def recommander():
+    student_id = request.args.get('student_id')
+
+    if not student_id:
+        return jsonify({"error": "student_id est requis"}), 400
+
+    student_id = int(student_id)
+    etudiants_df, offres_df, toutes_les_competences = prepare_data()
 
     donnees_etudiant = etudiants_df[etudiants_df['numETU'] == student_id]
     if donnees_etudiant.empty:
         return jsonify({"error": "Étudiant non trouvé"}), 404
 
     vecteur_competences_etudiant = np.array(donnees_etudiant['vecteur_competences'].tolist())
-    experience_etudiant = donnees_etudiant['experience'].values[0]
-    langue_etudiant = donnees_etudiant['langue'].values[0]
 
     matrice_competences_offres = np.array(offres_df['vecteur_competences'].tolist())
-    similarite_competences = cosine_similarity(vecteur_competences_etudiant, matrice_competences_offres)
 
-    similarite_experience = offres_df['experience_min'].apply(
-        lambda x: experience_similarity(experience_etudiant, x)).values
-    similarite_langue = offres_df['langue'].apply(lambda x: language_similarity(langue_etudiant, x)).values
-    similarite_contrat = offres_df['contrat'].apply(lambda x: contract_similarity("Stagiaire", x)).values
+    similarite_competences = cosine_similarity(vecteur_competences_etudiant, matrice_competences_offres)[0]
 
-    score_total = (0.4 * similarite_competences[0] +
-                   0.3 * similarite_experience +
-                   0.2 * similarite_langue +
-                   0.1 * similarite_contrat)
+    top_indices = np.argsort(similarite_competences)[-10:][::-1]
 
-    meilleures_offres = offres_df.loc[np.argsort(-score_total)[:10], ['offer_id', 'label', 'entreprise']]
+    meilleures_offres = offres_df.iloc[top_indices][['offer_id', 'label', 'entreprise']]
 
     return jsonify({
         "student_id": student_id,
@@ -157,4 +181,5 @@ def recommander():
 
 
 if __name__ == '__main__':
+    model = train_model()
     app.run(host="0.0.0.0", port=5000, debug=True)
