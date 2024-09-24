@@ -14,7 +14,6 @@ API_URL = "https://iagora-offre-serveur.onrender.com/OffreServeur"
 
 model = None
 
-
 def get_offers():
     offers_response = requests.get(f"{API_URL}/search?pageSize=3000")
     if offers_response.status_code == 200:
@@ -22,14 +21,12 @@ def get_offers():
     else:
         return []
 
-
 def get_students():
     students_response = requests.get(f"{API_URL}/student/list/listStudent/getAll?pageSize=500")
     if students_response.status_code == 200:
         return students_response.json().get('students', [])
     else:
         return []
-
 
 def normalize_skill(skill):
     skill = skill.lower().strip()
@@ -58,12 +55,10 @@ def normalize_skill(skill):
     }
     return corrections.get(skill, skill)
 
-
 def extract_skills_vector(skills_list, all_skills):
     normalized_skills_list = [normalize_skill(skill) for skill in skills_list]
     vector = [1 if normalize_skill(skill) in normalized_skills_list else 0 for skill in all_skills]
     return vector
-
 
 def prepare_data():
     offres = get_offers()
@@ -109,7 +104,6 @@ def prepare_data():
 
     return pd.DataFrame(donnees_etudiants), pd.DataFrame(donnees_offres), toutes_les_competences
 
-
 def train_model():
     etudiants_df, offres_df, toutes_les_competences = prepare_data()
 
@@ -150,10 +144,13 @@ def train_model():
 
     return model
 
-
 @app.route('/recommander', methods=['GET'])
 def recommander():
     global model
+
+    if model is None:
+        model = train_model()
+
     student_id = request.args.get('student_id')
 
     if not student_id:
@@ -171,19 +168,10 @@ def recommander():
     langue_etudiant = donnees_etudiant['langue'].values[0]
 
     matrice_competences_offres = np.array(offres_df['vecteur_competences'].tolist())
-    similarite_competences = cosine_similarity([vecteur_competences_etudiant], matrice_competences_offres)[0]
 
-    top_indices = np.argsort(similarite_competences)[-10:][::-1]
-    meilleures_offres = offres_df.iloc[top_indices][['offer_id', 'label', 'entreprise']]
+    top_offers = []
 
-    meilleures_offres['offer_id'] = meilleures_offres['offer_id'].astype(str)
-    meilleures_offres['label'] = meilleures_offres['label'].astype(str)
-    meilleures_offres['entreprise'] = meilleures_offres['entreprise'].astype(str)
-
-    predictions = []
-
-    for i in top_indices:
-        offre_vecteur_competences = matrice_competences_offres[i]
+    for i, offre_vecteur_competences in enumerate(matrice_competences_offres):
         experience_min_offre = offres_df.iloc[i]['experience_min']
         langue_offre = offres_df.iloc[i]['langue']
 
@@ -191,12 +179,20 @@ def recommander():
 
         X_pred = np.hstack([vecteur_competences_etudiant, offre_vecteur_competences, [experience_etudiant, experience_min_offre, langue_match]])
 
-        prediction = model.predict([X_pred])
-        predictions.append(int(prediction[0]))
+        score = model.predict_proba([X_pred])[0][1]
+        top_offers.append((offres_df.iloc[i], score))
+
+    top_offers = sorted(top_offers, key=lambda x: x[1], reverse=True)
+
+    recommandations = [{
+        "offer_id": offre['offer_id'],
+        "label": offre['label'],
+        "entreprise": offre['entreprise']
+    } for offre, score in top_offers[:10]]
 
     return jsonify({
         "student_id": student_id,
-        "recommendations": meilleures_offres.to_dict(orient="records")
+        "recommendations": recommandations
     })
 
 
