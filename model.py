@@ -1,3 +1,4 @@
+# import necessary modules
 import numpy as np
 import pandas as pd
 import pickle
@@ -9,20 +10,28 @@ import re
 import os
 
 API_URL = "https://iagora-offre-serveur.onrender.com/OffreServeur"
+cached_offres = None
+cached_etudiants = None
 
 def get_offers():
-    offers_response = requests.get(f"{API_URL}/search?pageSize=3000")
-    if offers_response.status_code == 200:
-        return offers_response.json().get('data', {}).get('offers', [])
-    else:
-        return []
+    global cached_offres
+    if cached_offres is None:
+        offers_response = requests.get(f"{API_URL}/search?pageSize=12000")
+        if offers_response.status_code == 200:
+            cached_offres = offers_response.json().get('data', {}).get('offers', [])
+        else:
+            cached_offres = []
+    return cached_offres
 
 def get_students():
-    students_response = requests.get(f"{API_URL}/student/list/listStudent/getAll?pageSize=500")
-    if students_response.status_code == 200:
-        return students_response.json().get('students', [])
-    else:
-        return []
+    global cached_etudiants
+    if cached_etudiants is None:
+        students_response = requests.get(f"{API_URL}/student/list/listStudent/getAll?pageSize=500")
+        if students_response.status_code == 200:
+            cached_etudiants = students_response.json().get('students', [])
+        else:
+            cached_etudiants = []
+    return cached_etudiants
 
 def normalize_skill(skill):
     skill = skill.lower().strip()
@@ -56,9 +65,13 @@ def extract_skills_vector(skills_list, all_skills):
     vector = [1 if normalize_skill(skill) in normalized_skills_list else 0 for skill in all_skills]
     return vector
 
-def prepare_data():
+def prepare_data_cached():
     offres = get_offers()
     etudiants = get_students()
+
+    if not offres or not etudiants:
+        print("Error: No data fetched from API.")
+        return None, None, None
 
     toutes_les_competences = set()
     for offre in offres:
@@ -70,6 +83,8 @@ def prepare_data():
         toutes_les_competences.update([normalize_skill(skill) for skill in competences_etudiant])
 
     toutes_les_competences = list(toutes_les_competences)
+
+    toutes_les_competences.sort()
 
     donnees_etudiants = []
     for etudiant in etudiants:
@@ -101,7 +116,7 @@ def prepare_data():
     return pd.DataFrame(donnees_etudiants), pd.DataFrame(donnees_offres), toutes_les_competences
 
 def train_model():
-    etudiants_df, offres_df, toutes_les_competences = prepare_data()
+    etudiants_df, offres_df, toutes_les_competences = prepare_data_cached()
 
     data = []
     for _, etudiant in etudiants_df.iterrows():

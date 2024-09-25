@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 import numpy as np
-from model import load_model, prepare_data
+from model import load_model, prepare_data_cached
 
 app = Flask(__name__)
 
@@ -18,7 +18,7 @@ def recommander():
         return jsonify({"error": "student_id est requis"}), 400
 
     student_id = int(student_id)
-    etudiants_df, offres_df, toutes_les_competences = prepare_data()
+    etudiants_df, offres_df, toutes_les_competences = prepare_data_cached()
 
     donnees_etudiant = etudiants_df[etudiants_df['numETU'] == student_id]
     if donnees_etudiant.empty:
