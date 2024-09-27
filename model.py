@@ -1,4 +1,3 @@
-# import necessary modules
 import numpy as np
 import pandas as pd
 import pickle
@@ -70,7 +69,6 @@ def prepare_data_cached():
     etudiants = get_students()
 
     if not offres or not etudiants:
-        print("Error: No data fetched from API.")
         return None, None, None
 
     toutes_les_competences = set()
@@ -83,7 +81,6 @@ def prepare_data_cached():
         toutes_les_competences.update([normalize_skill(skill) for skill in competences_etudiant])
 
     toutes_les_competences = list(toutes_les_competences)
-
     toutes_les_competences.sort()
 
     donnees_etudiants = []
@@ -118,6 +115,12 @@ def prepare_data_cached():
 def train_model():
     etudiants_df, offres_df, toutes_les_competences = prepare_data_cached()
 
+    vecteurs_data = {
+        "etudiants_df": etudiants_df,
+        "offres_df": offres_df,
+        "toutes_les_competences": toutes_les_competences
+    }
+
     data = []
     for _, etudiant in etudiants_df.iterrows():
         for _, offre in offres_df.iterrows():
@@ -151,22 +154,22 @@ def train_model():
 
     y_pred = model.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
-    print(f"Model trained. Accuracy: {accuracy * 100:.2f}%")
 
-    with open('model.pkl', 'wb') as file:
-        pickle.dump(model, file)
+    with open('modelRec.pkl', 'wb') as file:
+        pickle.dump((model, vecteurs_data), file)
+
     return model
 
 def load_model():
-    if os.path.exists('model.pkl'):
-        with open('model.pkl', 'rb') as file:
+    if os.path.exists('modelRec.pkl'):
+        with open('modelRec.pkl', 'rb') as file:
             model = pickle.load(file)
         return model
     else:
         return None
 
 if __name__ == '__main__':
-    if os.path.exists('model.pkl'):
+    if os.path.exists('modelRec.pkl'):
         model = load_model()
     else:
         model = train_model()
